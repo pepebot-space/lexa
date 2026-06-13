@@ -1,4 +1,8 @@
-viam-sdk
+# Rover service deps. gpiozero + lgpio come from the system (apt:
+# python3-gpiozero python3-lgpio) and are visible via a --system-site-packages
+# venv (see setup-rover.sh), so only the web bits are pip-installed here.
 fastapi
 uvicorn[standard]
 pydantic
+# optional, for the ADXL345 accelerometer over I2C:
+# smbus2
