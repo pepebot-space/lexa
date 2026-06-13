@@ -1,0 +1,13 @@
+# Pepebot Live API client dependencies.
+#
+# On Debian 13 / Raspberry Pi OS (Python 3.13, PEP-668 externally managed),
+# prefer the apt packages (see setup-lexa.sh) instead of pip:
+#   sudo apt-get install -y python3-pyaudio python3-opencv python3-websockets
+#
+# For a pip/venv install on other machines:
+websockets
+pyaudio
+opencv-python
+# audioop was removed from the stdlib in Python 3.13; client-video.py has a
+# pure-Python RMS fallback, so audioop-lts is optional:
+# audioop-lts; python_version >= "3.13"
