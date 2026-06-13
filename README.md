@@ -36,8 +36,8 @@ INPUT_DEVICE_INDEX=2 python3 client-video.py   # mic explicit (index can shift)
 
 ## Audio hardware (MAX98357A I2S amp)
 
-> Full hardware wiring (Viam Rover 1 + MAX98357A, incl. the GPIO19/encoder conflict
-> and its fix) is documented in [docs/WIRING.md](docs/WIRING.md).
+> Full hardware wiring (Viam Rover 1 + MAX98357A) is documented in
+> [docs/WIRING.md](docs/WIRING.md).
 
 A MAX98357A I2S DAC/amplifier is wired to the Pi 3 (BCLK=GPIO18, LRCLK=GPIO19,
 DIN=GPIO21). Configured via:
@@ -53,12 +53,8 @@ Card layout after setup: `0` bcm2835 Headphones (onboard, still available),
 
 Quick check: `speaker-test -D default -t sine -f 440 -c 2 -l 1`
 
-**Wiring is critical — LRCLK MUST be on GPIO19.** The Pi's PCM peripheral
-hardwires LRCLK (frame-sync) to GPIO19, BCLK to GPIO18, data to GPIO21; these
-cannot be moved (GPIO9 is SPI MISO, not an I2S pin). Symptom of a mis-wired
-LRCLK: **test tones sound roughly OK but speech is garbled/unintelligible even
-though the received audio data is clean** (a jittery frame-sync survives a
-single tone but destroys complex speech). Fix = put LRCLK back on GPIO19.
+I2S pins: BCLK=GPIO18 (pin 12), LRCLK=GPIO19 (pin 35), DIN=GPIO21 (pin 40).
+See [docs/WIRING.md](docs/WIRING.md) for the full pinout.
 
 ## Configuration (environment variables)
 
