@@ -146,6 +146,60 @@ VIDEO_HEIGHT = 360
 VIDEO_JPEG_QUALITY = 70
 VIDEO_INTERVAL_SEC = 0.5  # ~2 FPS
 
+# Camera obstacle-stop (safety assist; runs here in the client, which owns the
+# webcam). Floor-appearance heuristic: the bottom-center strip is taken as the
+# floor reference when the path is clear; if the forward ROI is mostly "not
+# floor" (an object intruding) for several consecutive frames, POST /stop to the
+# rover. Coarse (mono camera, no depth) — the LLM's own vision stays primary.
+# Default OFF: the mono-camera floor heuristic false-triggers until tuned on the
+# actual floor (run test-obstacle.py on the floor, set OBSTACLE_TOL/FRACTION, then
+# enable with OBSTACLE_STOP=1). IMU + encoder-stall safety remain active regardless.
+OBSTACLE_STOP = os.environ.get("OBSTACLE_STOP", "0") not in ("0", "false", "False")
+ROVER_API = os.environ.get("ROVER_API", "http://localhost:9000")
+OBSTACLE_FRACTION = float(os.environ.get("OBSTACLE_FRACTION", "0.6"))  # non-floor frac
+OBSTACLE_FRAMES = int(os.environ.get("OBSTACLE_FRAMES", "3"))          # consecutive frames
+OBSTACLE_TOL = int(os.environ.get("OBSTACLE_TOL", "80"))               # HSV summed dist
+OBSTACLE_COOLDOWN_SEC = float(os.environ.get("OBSTACLE_COOLDOWN_SEC", "2.5"))
+
+
+def detect_obstacle(frame, state: dict) -> bool:
+    """Return True when a near obstacle fills the forward view for OBSTACLE_FRAMES
+    consecutive frames (floor-appearance heuristic). `state` holds the counter."""
+    if cv2 is None:
+        return False
+    try:
+        import numpy as np
+
+        h, w = frame.shape[:2]
+        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+        fy0 = int(h * 0.92)
+        floor = hsv[fy0:h, int(w * 0.35):int(w * 0.65)].reshape(-1, 3)
+        if floor.size == 0:
+            return False
+        ref = np.median(floor, axis=0)
+        roi = hsv[int(h * 0.55):fy0, int(w * 0.30):int(w * 0.70)].astype(np.int16)
+        if roi.size == 0:
+            return False
+        nonfloor = np.abs(roi - ref).sum(axis=2) > OBSTACLE_TOL
+        frac = float(nonfloor.mean())
+        state["count"] = state.get("count", 0) + 1 if frac >= OBSTACLE_FRACTION else 0
+        return state["count"] >= OBSTACLE_FRAMES
+    except Exception:
+        return False
+
+
+def _post_rover(path: str):
+    import urllib.request
+
+    try:
+        req = urllib.request.Request(
+            ROVER_API + path, data=b"{}",
+            headers={"Content-Type": "application/json"}, method="POST",
+        )
+        urllib.request.urlopen(req, timeout=2).read()
+    except Exception:
+        pass
+
 
 class NoiseGate:
     def __init__(self):
@@ -501,12 +555,24 @@ async def main():
                     cap.set, cv2.CAP_PROP_FRAME_HEIGHT, VIDEO_HEIGHT
                 )
 
+                obstacle_state = {"count": 0}
+                last_stop = 0.0
                 try:
                     while not stop_event.is_set():
                         ok, frame = await asyncio.to_thread(cap.read)
                         if not ok:
                             await asyncio.sleep(VIDEO_INTERVAL_SEC)
                             continue
+
+                        if OBSTACLE_STOP:
+                            hit = await asyncio.to_thread(
+                                detect_obstacle, frame, obstacle_state
+                            )
+                            if hit and (loop.time() - last_stop) > OBSTACLE_COOLDOWN_SEC:
+                                last_stop = loop.time()
+                                obstacle_state["count"] = 0
+                                print("Obstacle ahead -> rover /stop (camera assist)")
+                                await asyncio.to_thread(_post_rover, "/stop")
 
                         ok_jpg, encoded = await asyncio.to_thread(
                             cv2.imencode,
