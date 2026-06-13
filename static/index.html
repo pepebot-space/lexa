@@ -1,0 +1,763 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LEXA Control Panel</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        lexa: {
+                            bg: '#0a0a0a',
+                            panel: '#141414',
+                            border: '#2a2a2a',
+                            textPrimary: '#ffffff',
+                            textSecondary: '#8a8a8a',
+                            accent: '#4ade80'
+                        }
+                    },
+                    fontFamily: {
+                        mono: ['"JetBrains Mono"', '"Space Mono"', 'monospace', 'ui-monospace'],
+                    }
+                }
+            }
+        }
+    </script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style type="text/tailwindcss">
+        body {
+            background-color: #0a0a0a !important;
+            color: #ffffff !important;
+            font-family: 'JetBrains Mono', 'Space Mono', monospace;
+        }
+        
+        .panel {
+            background-color: #141414 !important;
+            border: 1px solid #2a2a2a !important;
+            position: relative;
+        }
+
+        /* Sci-fi corners */
+        .panel::before, .panel::after,
+        .panel-inner::before, .panel-inner::after {
+            content: '';
+            position: absolute;
+            width: 8px;
+            height: 8px;
+            border-color: #555;
+            border-style: solid;
+        }
+        .panel::before { top: 0; left: 0; border-width: 1px 0 0 1px; }
+        .panel::after { top: 0; right: 0; border-width: 1px 1px 0 0; }
+        .panel-inner::before { bottom: 0; left: 0; border-width: 0 0 1px 1px; }
+        .panel-inner::after { bottom: 0; right: 0; border-width: 0 1px 1px 0; }
+
+        .scrollbar-hide::-webkit-scrollbar {
+            display: none;
+        }
+        .scrollbar-hide {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+
+        /* Joystick styles */
+        .joystick-container {
+            touch-action: none;
+            border-radius: 50%;
+            background: #1a1a1a;
+            border: 2px solid #333;
+            position: relative;
+            box-shadow: inset 0 0 20px rgba(0,0,0,0.8);
+        }
+        .joystick-knob {
+            width: 40px;
+            height: 40px;
+            background: #4ade80;
+            border-radius: 50%;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            cursor: pointer;
+            box-shadow: 0 0 10px rgba(74, 222, 128, 0.5);
+            transition: box-shadow 0.2s;
+        }
+        .joystick-knob:active {
+            box-shadow: 0 0 20px rgba(74, 222, 128, 0.8);
+        }
+
+        .btn-sci {
+            background: transparent;
+            border: 1px solid #444;
+            color: #aaa;
+            transition: all 0.2s;
+            text-transform: uppercase;
+            font-size: 0.75rem;
+            letter-spacing: 1px;
+        }
+        .btn-sci:hover {
+            border-color: #fff;
+            color: #fff;
+            background: rgba(255,255,255,0.05);
+        }
+        .btn-sci:active {
+            background: rgba(255,255,255,0.1);
+        }
+        .blinking-dot {
+            animation: blink 2s infinite;
+        }
+        @keyframes blink {
+            50% { opacity: 0.3; }
+        }
+    </style>
+</head>
+<body class="h-screen w-screen overflow-hidden flex flex-col p-4 gap-4 selection:bg-lexa-accent selection:text-black">
+
+<!-- HEADER -->
+<header class="flex justify-between items-end pb-2 border-b border-lexa-border">
+    <div class="flex items-center gap-4">
+        <h1 class="text-2xl font-bold tracking-widest uppercase">LEXA</h1>
+        <div class="h-4 w-px bg-lexa-border"></div>
+        <div class="text-xs text-lexa-textSecondary" id="connStatus">
+            <span class="inline-block w-2 h-2 rounded-full bg-red-500 mr-2 blinking-dot" id="statusDot"></span>
+            SYSTEM DISCONNECTED
+        </div>
+    </div>
+    
+    <div class="flex gap-8 text-xs text-lexa-textSecondary text-right">
+        <div>
+            <div class="uppercase mb-1 tracking-wider text-[10px]">Unit ID</div>
+            <div class="text-lexa-textPrimary font-bold" id="unitId">M-LEXA 09</div>
+        </div>
+        <div>
+            <div class="uppercase mb-1 tracking-wider text-[10px]">Uptime</div>
+            <div class="text-lexa-textPrimary font-bold" id="uptimeCounter">0:00:00</div>
+        </div>
+        <div>
+            <div class="uppercase mb-1 tracking-wider text-[10px]">Power Level</div>
+            <div class="flex items-center gap-2">
+                <svg class="w-4 h-4 text-lexa-textPrimary" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clip-rule="evenodd" />
+                </svg>
+                <span class="text-lexa-textPrimary font-bold" id="topBattery">--%</span>
+            </div>
+        </div>
+        <div class="flex items-center gap-2">
+            <select id="deviceSelect" class="bg-[#141414] border border-[#2a2a2a] text-xs px-2 py-1 outline-none text-lexa-textSecondary max-w-[150px]">
+                <option value="">Select Target...</option>
+            </select>
+            <button class="btn-sci p-1 px-2" onclick="scanDevices()">SCAN</button>
+            <button class="btn-sci p-1 px-2" id="btnConnect" onclick="connectDevice()">CONNECT</button>
+        </div>
+    </div>
+</header>
+
+<!-- MAIN GRID -->
+<div class="flex-1 grid grid-cols-12 grid-rows-2 gap-4 min-h-0">
+    
+    <!-- LEFT PANEL: Camera / Media -->
+    <div class="col-span-5 row-span-2 panel flex flex-col p-4 relative">
+        <div class="panel-inner absolute inset-0 pointer-events-none"></div>
+        
+        <div class="relative flex-1 bg-[#050505] border border-[#222] mb-4 overflow-hidden rounded group">
+            <!-- Real Live Camera Feed -->
+            <img id="cameraFeed" src="" alt="Camera Feed Offline" class="absolute inset-0 w-full h-full object-cover opacity-80 mix-blend-luminosity">
+            
+            <div class="absolute inset-0 bg-gradient-to-t from-black via-transparent to-transparent pointer-events-none"></div>
+            
+            <!-- Scan lines overlay -->
+            <div class="absolute inset-0 pointer-events-none" style="background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.1) 2px, rgba(0,0,0,0.1) 4px);"></div>
+            
+            <!-- Reticle -->
+            <div class="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-32 h-32 border border-white/20 rounded-full flex items-center justify-center">
+                <div class="w-1 h-4 bg-white/40 absolute top-0"></div>
+                <div class="w-1 h-4 bg-white/40 absolute bottom-0"></div>
+                <div class="w-4 h-1 bg-white/40 absolute left-0"></div>
+                <div class="w-4 h-1 bg-white/40 absolute right-0"></div>
+                <div class="w-2 h-2 bg-red-500/80 rounded-full"></div>
+            </div>
+            
+            <div class="absolute top-4 right-4 text-xs font-mono text-white/70 tracking-widest">
+                REC <span class="text-red-500 blink block inline-block w-2 h-2 rounded-full ml-1 blinking-dot"></span>
+            </div>
+        </div>
+
+        <div class="flex justify-between items-end block mb-4 border-b border-[#222] pb-2">
+            <h2 class="text-lg tracking-wider">Live Multispectral Camera</h2>
+            
+            <!-- Voice Panel Controls -->
+            <div class="flex items-center gap-3">
+                <span class="text-[10px] text-lexa-textSecondary uppercase tracking-widest" id="agentStatusText">VOICE: IDLE</span>
+                <button class="btn-sci p-1 w-8 h-8 flex justify-center items-center" id="voiceToggleBtn" onclick="toggleVoiceAgent()">
+                    <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"></path></svg>
+                </button>
+            </div>
+        </div>
+        
+        <div class="mb-2 flex items-baseline gap-2">
+            <span class="text-3xl font-light tracking-tight" id="batteryPercentBig">--.-</span>
+            <span class="text-[10px] text-lexa-textSecondary tracking-widest uppercase">% Power Remaining</span>
+        </div>
+        
+        <div class="h-6 w-full flex gap-1 mb-1" id="energyBars">
+            <!-- Bars generated via JS -->
+        </div>
+        
+        <div class="flex justify-between text-[10px] text-lexa-textSecondary uppercase tracking-widest">
+            <span><span id="batRaw" class="text-white">--</span> Raw Voltage</span>
+            <span><span class="text-white">Stable</span> System</span>
+        </div>
+    </div>
+
+    <!-- RIGHT TOP: Power Diagnostics -->
+    <div class="col-span-7 row-span-1 panel p-4 flex flex-col relative">
+        <div class="panel-inner absolute inset-0 pointer-events-none"></div>
+        
+        <div class="flex justify-between items-start mb-4">
+            <h2 class="text-lg tracking-wider">Power Diagnostics</h2>
+        </div>
+        
+        <div class="grid grid-cols-3 gap-4 h-full pb-4">
+            <div class="bg-[#222] border border-[#333] rounded p-3 flex flex-col justify-center">
+                <div class="text-[10px] text-lexa-textSecondary uppercase tracking-widest mb-1">Battery Level</div>
+                <div id="diagPercent" class="text-3xl font-light text-lexa-accent">--%</div>
+            </div>
+            <div class="bg-[#222] border border-[#333] rounded p-3 flex flex-col justify-center">
+                <div class="text-[10px] text-lexa-textSecondary uppercase tracking-widest mb-1">Voltage</div>
+                <div id="diagVoltage" class="text-3xl font-light text-cyan-400">-- V</div>
+            </div>
+            <div class="bg-[#222] border border-[#333] rounded p-3 flex flex-col justify-center">
+                <div class="text-[10px] text-lexa-textSecondary uppercase tracking-widest mb-1">Raw (deci-volt)</div>
+                <div id="diagRaw" class="text-3xl font-light text-white">--</div>
+            </div>
+            <div class="bg-[#222] border border-[#333] rounded p-3 flex flex-col justify-center col-span-1">
+                <div class="text-[10px] text-lexa-textSecondary uppercase tracking-widest mb-1">Decode Mode</div>
+                <div id="diagDecode" class="text-lg font-mono text-gray-300">-</div>
+            </div>
+            <div class="bg-[#222] border border-[#333] rounded p-3 flex flex-col justify-center col-span-2">
+                <div class="text-[10px] text-lexa-textSecondary uppercase tracking-widest mb-1">Percent Source</div>
+                <div id="diagSource" class="text-lg font-mono text-amber-400">-</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- RIGHT BOTTOM LEFT: Material Analysis (Logs) -->
+    <div class="col-span-3 row-span-1 panel p-4 flex flex-col relative">
+        <div class="panel-inner absolute inset-0 pointer-events-none"></div>
+        
+        <div class="flex justify-between items-center mb-4">
+            <h2 class="text-sm tracking-wider uppercase">System Logs</h2>
+            <button class="btn-sci p-1 w-6 h-6 flex justify-center items-center text-[10px]" onclick="fetchLogs()">...</button>
+        </div>
+        
+        <div class="flex-1 overflow-y-auto scrollbar-hide space-y-3 pr-2" id="logContainer">
+            <div class="text-sm text-lexa-textSecondary text-center mt-10">No logs generated yet.</div>
+        </div>
+    </div>
+
+    <!-- RIGHT BOTTOM RIGHT: Multispectral Array (Control) -->
+    <div class="col-span-4 row-span-1 panel p-4 flex flex-col relative">
+        <div class="panel-inner absolute inset-0 pointer-events-none"></div>
+        
+        <div class="flex justify-between items-center mb-4 border-b border-[#222] pb-2">
+            <h2 class="text-sm tracking-wider uppercase">Motion Vector Control</h2>
+            <button id="modeToggleBtn" onclick="toggleControlMode()" class="text-[9px] uppercase tracking-widest border border-[#333] text-lexa-textSecondary hover:border-lexa-accent hover:text-lexa-accent px-2 py-1 transition-colors">
+                MODE: JOYSTICK
+            </button>
+        </div>
+        
+        <div class="flex flex-1 justify-between items-center">
+            
+            <!-- independent thrust sliders -->
+            <div class="flex flex-col justify-center gap-6">
+                <!-- Forward/Backward (Y-Axis) -->
+                <div>
+                    <div class="text-[10px] text-lexa-textSecondary uppercase tracking-widest mb-1 flex justify-between items-center gap-2">
+                        <span>Forward/Backward (Y)</span>
+                        <input type="number" id="valY" value="12000" min="1000" max="32767" class="bg-transparent text-white w-14 text-right outline-none border-b border-gray-600 focus:border-lexa-accent p-0 tabular-nums" onchange="updateSliderFromInput('Y')">
+                    </div>
+                    <input type="range" id="powerYSlider" min="1000" max="32767" value="12000" class="w-24 accent-lexa-textPrimary h-1 bg-gray-800 outline-none" oninput="updateInputFromSlider('Y')" onchange="saveMotionConfig()">
+                </div>
+                <!-- Left/Right (X-Axis) -->
+                <div>
+                    <div class="text-[10px] text-lexa-textSecondary uppercase tracking-widest mb-1 flex justify-between items-center gap-2">
+                        <span>Left/Right (X)</span>
+                        <input type="number" id="valX" value="8000" min="1000" max="32767" class="bg-transparent text-white w-14 text-right outline-none border-b border-gray-600 focus:border-lexa-accent p-0 tabular-nums" onchange="updateSliderFromInput('X')">
+                    </div>
+                    <input type="range" id="powerXSlider" min="1000" max="32767" value="8000" class="w-24 accent-lexa-textPrimary h-1 bg-gray-800 outline-none" oninput="updateInputFromSlider('X')" onchange="saveMotionConfig()">
+                </div>
+            </div>
+
+            <!-- Joystick mode -->
+            <div id="joystickPanel" class="flex flex-col items-center">
+                <div class="joystick-container w-32 h-32" id="joystickArea">
+                    <div id="joystickKnob" class="joystick-knob"></div>
+                </div>
+                
+                <div class="mt-4 flex gap-4 text-[10px] text-lexa-textSecondary uppercase font-mono">
+                    <span>X: <span id="joyX" class="text-white">0</span></span>
+                    <span>Y: <span id="joyY" class="text-white">0</span></span>
+                </div>
+            </div>
+
+            <!-- D-pad mode (hidden by default) -->
+            <div id="dpadPanel" class="hidden flex flex-col items-center gap-1">
+                <!-- Row 1: Up -->
+                <div class="flex justify-center">
+                    <button onmousedown="startDpad('forward')" onmouseup="stopDpad()" onmouseleave="stopDpad()"
+                        ontouchstart="startDpad('forward')" ontouchend="stopDpad()"
+                        class="w-10 h-10 bg-[#111] border border-[#333] hover:border-lexa-accent text-lexa-textSecondary hover:text-lexa-accent rounded text-lg transition-colors select-none">↑</button>
+                </div>
+                <!-- Row 2: Left STOP Right -->
+                <div class="flex gap-1">
+                    <button onmousedown="startDpad('left')" onmouseup="stopDpad()" onmouseleave="stopDpad()"
+                        ontouchstart="startDpad('left')" ontouchend="stopDpad()"
+                        class="w-10 h-10 bg-[#111] border border-[#333] hover:border-lexa-accent text-lexa-textSecondary hover:text-lexa-accent rounded text-lg transition-colors select-none">←</button>
+                    <button onclick="stopDpadNow()"
+                        class="w-10 h-10 bg-red-900/40 border border-red-700 hover:bg-red-800/60 text-red-400 rounded text-[9px] font-bold tracking-widest transition-colors select-none">STP</button>
+                    <button onmousedown="startDpad('right')" onmouseup="stopDpad()" onmouseleave="stopDpad()"
+                        ontouchstart="startDpad('right')" ontouchend="stopDpad()"
+                        class="w-10 h-10 bg-[#111] border border-[#333] hover:border-lexa-accent text-lexa-textSecondary hover:text-lexa-accent rounded text-lg transition-colors select-none">→</button>
+                </div>
+                <!-- Row 3: Down -->
+                <div class="flex justify-center">
+                    <button onmousedown="startDpad('backward')" onmouseup="stopDpad()" onmouseleave="stopDpad()"
+                        ontouchstart="startDpad('backward')" ontouchend="stopDpad()"
+                        class="w-10 h-10 bg-[#111] border border-[#333] hover:border-lexa-accent text-lexa-textSecondary hover:text-lexa-accent rounded text-lg transition-colors select-none">↓</button>
+                </div>
+                <!-- Row 4: Duration setting -->
+                <div class="mt-2 w-full px-1">
+                    <div class="text-[9px] text-lexa-textSecondary uppercase tracking-widest mb-1 flex justify-between items-center">
+                        <span>Duration</span>
+                        <div class="flex items-center gap-1">
+                            <input type="number" id="valDpadDuration" value="500" min="100" max="5000" step="100"
+                                class="bg-transparent text-white w-14 text-right outline-none border-b border-gray-600 focus:border-lexa-accent p-0 tabular-nums text-[9px]"
+                                onchange="updateDpadDurationFromInput()">
+                            <span class="text-[9px] text-lexa-textSecondary">ms</span>
+                        </div>
+                    </div>
+                    <input type="range" id="dpadDurationSlider" min="100" max="5000" step="100" value="500"
+                        class="w-full accent-lexa-textPrimary h-1 bg-gray-800 outline-none"
+                        oninput="updateDpadDurationFromSlider()" onchange="saveMotionConfig()">
+                </div>
+            </div>
+            
+        </div>
+        
+    </div>
+
+</div>
+
+<!-- Hidden Input Removed -->
+
+<script>
+    const API_URL = '';
+    let isConnected = false;
+    let joystickActive = false;
+    let joyX = 0, joyY = 0;
+    let chartInstance = null;
+    let uptimeSeconds = 0;
+    let logPollInterval = null;
+    let isVoiceActive = false;
+
+    function updateInputFromSlider(axis) {
+        document.getElementById('val' + axis).value = document.getElementById('power' + axis + 'Slider').value;
+    }
+
+    function updateSliderFromInput(axis) {
+        let val = parseInt(document.getElementById('val' + axis).value, 10);
+        if(isNaN(val)) val = 1000;
+        if(val < 1000) val = 1000;
+        if(val > 32767) val = 32767;
+        document.getElementById('power' + axis + 'Slider').value = val;
+        document.getElementById('val' + axis).value = val;
+        saveMotionConfig();
+    }
+
+    // Chart JS totally removed
+
+    // --- Uptime Timer ---
+    setInterval(() => {
+        uptimeSeconds++;
+        const h = Math.floor(uptimeSeconds / 3600);
+        const m = Math.floor((uptimeSeconds % 3600) / 60);
+        const s = uptimeSeconds % 60;
+        document.getElementById('uptimeCounter').innerText = 
+            `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+    }, 1000);
+
+    // --- API & Core Functions ---
+    async function api(endpoint, method = 'GET', body = null) {
+        const options = { 
+            method, 
+            headers: { 'Content-Type': 'application/json' },
+            cache: 'no-store'
+        };
+        if (body) options.body = JSON.stringify(body);
+        const response = await fetch(API_URL + '/api' + endpoint, options);
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || 'Request failed');
+        }
+        return response.json();
+    }
+
+    function updateConnUI(connected, name = '', address = '') {
+        isConnected = connected;
+        const statusDot = document.getElementById('statusDot');
+        const connStatus = document.getElementById('connStatus');
+        const btnConnect = document.getElementById('btnConnect');
+        const unitId = document.getElementById('unitId');
+        
+        if (connected) {
+            statusDot.classList.replace('bg-red-500', 'bg-lexa-accent');
+            connStatus.innerHTML = `<span class="inline-block w-2 h-2 rounded-full bg-lexa-accent mr-2 blinking-dot" id="statusDot"></span>LINK ESTABLISHED`;
+            btnConnect.textContent = 'DISCONNECT';
+            btnConnect.onclick = disconnectDevice;
+            unitId.textContent = name || 'LEXA-UNKNOWN';
+            
+            // Start battery polling & logs
+            startPoller();
+            fetchBatteryHistory();
+        } else {
+            statusDot.classList.replace('bg-lexa-accent', 'bg-red-500');
+            connStatus.innerHTML = `<span class="inline-block w-2 h-2 rounded-full bg-red-500 mr-2 blinking-dot" id="statusDot"></span>SYSTEM DISCONNECTED`;
+            btnConnect.textContent = 'CONNECT';
+            btnConnect.onclick = connectDevice;
+            unitId.textContent = 'STANDBY';
+            stopPoller();
+        }
+    }
+
+    async function scanDevices() {
+        const select = document.getElementById('deviceSelect');
+        select.innerHTML = '<option value="">Scanning...</option>';
+        try {
+            const result = await api('/scan?timeout=5');
+            select.innerHTML = '<option value="">Select Target...</option>';
+            if (result.devices.length === 0) {
+                select.innerHTML = '<option value="">No devices found</option>';
+            } else {
+                result.devices.forEach(d => {
+                    const opt = document.createElement('option');
+                    opt.value = d.address;
+                    opt.textContent = `${d.name || 'Unknown'} (${d.address})`;
+                    select.appendChild(opt);
+                });
+            }
+            fetchLogs();
+        } catch (e) { 
+            console.error('Scan err:', e); 
+            select.innerHTML = '<option value="">Scan Failed</option>';
+        }
+    }
+
+    async function connectDevice() {
+        const addr = document.getElementById('deviceSelect').value;
+        if (!addr) {
+            alert("Please scan and select a device from the dropdown first.");
+            return;
+        }
+        try {
+            const res = await api('/connect', 'POST', { address: addr });
+            updateConnUI(true, res.name, res.address);
+            
+            // Auto-connect voice agent outputting to this Bluetooth speaker name
+            if (!isVoiceActive) {
+                await toggleVoiceAgent(res.name);
+            }
+        } catch(e) { console.error('Connect failed:', e); fetchLogs(); }
+    }
+
+    async function disconnectDevice() {
+        try {
+            await api('/disconnect', 'POST');
+            updateConnUI(false);
+            if (isVoiceActive) await toggleVoiceAgent(); // Auto-disconnect agent
+        } catch(e) { console.error('Disconnect failed:', e); }
+    }
+    
+    // --- Voice Agent Controls ---
+    async function toggleVoiceAgent(forceSpeakerName = null) {
+        try {
+            if (!isVoiceActive) {
+                let speaker = forceSpeakerName;
+                if (!speaker && isConnected) {
+                    const uiName = document.getElementById('unitId').textContent;
+                    if (uiName !== 'STANDBY' && uiName !== 'LEXA-UNKNOWN') speaker = uiName;
+                }
+                const payload = speaker ? { speaker_name: speaker } : null;
+                
+                await api('/agent/start', 'POST', payload);
+                isVoiceActive = true;
+                document.getElementById('agentStatusText').textContent = 'VOICE: ACTIVE';
+                document.getElementById('voiceToggleBtn').classList.add('bg-lexa-accent', 'text-black', 'border-lexa-accent');
+                // Set video feed source (causes browser to request MJPEG stream)
+                document.getElementById('cameraFeed').src = `/video_feed?rnd=${Math.random()}`;
+            } else {
+                await api('/agent/stop', 'POST');
+                isVoiceActive = false;
+                document.getElementById('agentStatusText').textContent = 'VOICE: IDLE';
+                document.getElementById('voiceToggleBtn').classList.remove('bg-lexa-accent', 'text-black', 'border-lexa-accent');
+                document.getElementById('cameraFeed').src = ``;
+            }
+        } catch(e) { 
+            console.error('Agent toggle failed:', e); 
+        }
+    }
+    
+    // Check Agent Status on load
+    api('/agent/status').then(res => {
+        if (res.status === 'live' || res.status === 'starting' || res.status === 'connected') {
+            isVoiceActive = true;
+            document.getElementById('agentStatusText').textContent = 'VOICE: ACTIVE';
+            document.getElementById('voiceToggleBtn').classList.add('bg-lexa-accent', 'text-black', 'border-lexa-accent');
+            document.getElementById('cameraFeed').src = `/video_feed?rnd=${Math.random()}`;
+        }
+    }).catch(e => console.error(e));
+
+    // --- Battery & Logs Polling ---
+    let poller = null;
+    function startPoller() {
+        if (poller) return;
+        poller = setInterval(() => {
+            if (isConnected) {
+                api('/battery').then(res => {
+                    updateBatteryUI(res.battery_percent, res.voltage, res.raw_deci_volt, res.rx_decode_mode, res.battery_percent_source);
+                }).catch(e => console.error(e));
+                fetchLogs();
+            }
+        }, 10000); 
+        api('/battery').then(res => updateBatteryUI(res.battery_percent, res.voltage, res.raw_deci_volt, res.rx_decode_mode, res.battery_percent_source));
+        fetchLogs();
+    }
+    
+    function stopPoller() {
+        if(poller) clearInterval(poller);
+        poller = null;
+    }
+
+    function updateBatteryUI(percent, voltage, raw, decode, source) {
+        document.getElementById('topBattery').textContent = `${percent}%`;
+        document.getElementById('batteryPercentBig').textContent = `${percent.toFixed(1)}`;
+        document.getElementById('batRaw').textContent = raw;
+        
+        // Update new Diagnostic Panel
+        document.getElementById('diagPercent').textContent = `${percent}%`;
+        document.getElementById('diagVoltage').textContent = `${voltage.toFixed(1)} V`;
+        document.getElementById('diagRaw').textContent = raw;
+        document.getElementById('diagDecode').textContent = decode || '-';
+        document.getElementById('diagSource').textContent = source || '-';
+        
+        const barsContainer = document.getElementById('energyBars');
+        barsContainer.innerHTML = '';
+        const filled = Math.floor((percent / 100) * 40);
+        for(let i=0; i<40; i++) {
+            const bar = document.createElement('div');
+            bar.className = 'flex-1 h-full ' + (i < filled ? 'bg-white' : 'bg-[#333]');
+            barsContainer.appendChild(bar);
+        }
+    }
+
+    function getLevelColor(lvl) {
+        switch(lvl) {
+            case 'ERROR': return 'text-red-500';
+            case 'SUCCESS': return 'text-lexa-accent';
+            case 'WARN': return 'text-yellow-500';
+            case 'CMD': return 'text-blue-400';
+            default: return 'text-lexa-textSecondary';
+        }
+    }
+
+    async function fetchLogs() {
+        try {
+            const res = await api('/logs?limit=15');
+            const container = document.getElementById('logContainer');
+            container.innerHTML = '';
+            
+            res.logs.forEach(log => {
+                const timeStr = log.timestamp.split(' ')[1].substring(0, 5);
+                const div = document.createElement('div');
+                div.className = 'flex items-start gap-3 border-b border-[#222] pb-2 text-[11px]';
+                
+                div.innerHTML = `
+                    <div class="flex-1">
+                        <div class="flex justify-between items-baseline mb-1">
+                            <span class="font-bold uppercase tracking-wider ${getLevelColor(log.level)} text-xs">${log.component}</span>
+                            <span class="text-lexa-textSecondary tracking-widest text-[10px] bg-black/50 px-1 rounded">${log.level}</span>
+                        </div>
+                        <div class="text-lexa-textPrimary">${log.message}</div>
+                    </div>
+                    <div class="text-lexa-textSecondary text-right shrink-0 mt-1">${timeStr}</div>
+                `;
+                container.appendChild(div);
+            });
+        } catch(e) { console.error('Fetch logs err:', e); }
+    }
+
+    // --- Joystick Logic ---
+    const joystickArea = document.getElementById('joystickArea');
+    const joystickKnob = document.getElementById('joystickKnob');
+    let joyTimer = null;
+
+    function getJoystickPos(e, rect) {
+        let cx, cy;
+        if(e.touches) { cx = e.touches[0].clientX; cy = e.touches[0].clientY; }
+        else { cx = e.clientX; cy = e.clientY; }
+        
+        const x = cx - rect.left - rect.width / 2;
+        const y = cy - rect.top - rect.height / 2;
+        const maxDist = rect.width / 2 - 20; 
+        
+        const dist = Math.min(Math.sqrt(x*x + y*y), maxDist);
+        const angle = Math.atan2(y, x);
+        
+        // Use the dynamically selected limits from sliders for Max limits!
+        const maxY = parseInt(document.getElementById('powerYSlider').value, 10);
+        const maxX = parseInt(document.getElementById('powerXSlider').value, 10);
+        
+        return {
+            x: Math.round((Math.cos(angle) * dist / maxDist) * maxX),
+            y: Math.round((Math.sin(angle) * dist / maxDist) * -maxY), // invert Y
+            percX: Math.cos(angle) * dist,
+            percY: Math.sin(angle) * dist
+        };
+    }
+
+    function handleJoyMove(e) {
+        if(!joystickActive) return;
+        e.preventDefault();
+        const rect = joystickArea.getBoundingClientRect();
+        const pos = getJoystickPos(e, rect);
+        
+        joyX = pos.x; joyY = pos.y;
+        document.getElementById('joyX').textContent = joyX;
+        document.getElementById('joyY').textContent = joyY;
+        
+        joystickKnob.style.left = `calc(50% + ${pos.percX}px)`;
+        joystickKnob.style.top = `calc(50% + ${pos.percY}px)`;
+    }
+
+    function startSendingJoy() {
+        if(joyTimer) return;
+        joyTimer = setInterval(() => {
+            if(isConnected && (joyX !== 0 || joyY !== 0)) {
+                api('/joystick', 'POST', { x: joyX, y: -joyY, duration: 0.5 }).catch(()=>{});
+            }
+        }, 150);
+    }
+
+    function stopSendingJoy() {
+        if(joyTimer) { clearInterval(joyTimer); joyTimer = null; }
+        joyX = 0; joyY = 0;
+        document.getElementById('joyX').textContent = '0';
+        document.getElementById('joyY').textContent = '0';
+        joystickKnob.style.left = '50%';
+        joystickKnob.style.top = '50%';
+        if(isConnected) {
+            api('/move', 'POST', { action: 'stop' }).catch(()=>{});
+        }
+    }
+
+    // --- Control Mode Toggle (Joystick <-> D-pad) ---
+    let isDpadMode = false;
+    let dpadHoldTimer = null;
+
+    function toggleControlMode() {
+        isDpadMode = !isDpadMode;
+        document.getElementById('joystickPanel').classList.toggle('hidden', isDpadMode);
+        document.getElementById('dpadPanel').classList.toggle('hidden', !isDpadMode);
+        document.getElementById('modeToggleBtn').textContent = isDpadMode ? 'MODE: D-PAD' : 'MODE: JOYSTICK';
+        if (!isDpadMode) stopDpadNow(); // stop any lingering command
+    }
+
+    function getDpadDuration() {
+        return parseInt(document.getElementById('dpadDurationSlider').value, 10) || 500;
+    }
+
+    function updateDpadDurationFromSlider() {
+        document.getElementById('valDpadDuration').value = document.getElementById('dpadDurationSlider').value;
+    }
+
+    function updateDpadDurationFromInput() {
+        let val = parseInt(document.getElementById('valDpadDuration').value, 10);
+        if (isNaN(val)) val = 500;
+        if (val < 100) val = 100;
+        if (val > 5000) val = 5000;
+        document.getElementById('dpadDurationSlider').value = val;
+        document.getElementById('valDpadDuration').value = val;
+        saveMotionConfig();
+    }
+
+    function startDpad(direction) {
+        if (!isConnected) return;
+        const dur = getDpadDuration();
+        api('/move', 'POST', { action: direction, duration: dur / 1000 }).catch(()=>{});
+        // Keep sending while held, using duration as repeat interval
+        dpadHoldTimer = setInterval(() => {
+            if (isConnected) api('/move', 'POST', { action: direction, duration: dur / 1000 }).catch(()=>{});
+        }, dur);
+    }
+
+    function stopDpad() {
+        if (dpadHoldTimer) { clearInterval(dpadHoldTimer); dpadHoldTimer = null; }
+        if (isConnected) api('/move', 'POST', { action: 'stop' }).catch(()=>{});
+    }
+
+    function stopDpadNow() {
+        if (dpadHoldTimer) { clearInterval(dpadHoldTimer); dpadHoldTimer = null; }
+        if (isConnected) api('/move', 'POST', { action: 'stop' }).catch(()=>{});
+    }
+
+    joystickArea.addEventListener('mousedown', e => { joystickActive = true; handleJoyMove(e); startSendingJoy(); });
+    joystickArea.addEventListener('touchstart', e => { joystickActive = true; handleJoyMove(e); startSendingJoy(); });
+    document.addEventListener('mousemove', handleJoyMove);
+    document.addEventListener('touchmove', handleJoyMove);
+    document.addEventListener('mouseup', () => { if(joystickActive) { joystickActive = false; stopSendingJoy(); } });
+    document.addEventListener('touchend', () => { if(joystickActive) { joystickActive = false; stopSendingJoy(); } });
+
+    async function loadMotionConfig() {
+        try {
+            const config = await api('/config/motion');
+            if (config.y_max !== undefined) {
+                document.getElementById('powerYSlider').value = config.y_max;
+                document.getElementById('valY').value = config.y_max;
+            }
+            if (config.x_max !== undefined) {
+                document.getElementById('powerXSlider').value = config.x_max;
+                document.getElementById('valX').value = config.x_max;
+            }
+            if (config.dpad_duration !== undefined) {
+                document.getElementById('dpadDurationSlider').value = config.dpad_duration;
+                document.getElementById('valDpadDuration').value = config.dpad_duration;
+            }
+        } catch(e) { console.error('Failed to load motion config:', e); }
+    }
+
+    async function saveMotionConfig() {
+        try {
+            const y = parseInt(document.getElementById('powerYSlider').value, 10);
+            const x = parseInt(document.getElementById('powerXSlider').value, 10);
+            const dpadDur = parseInt(document.getElementById('dpadDurationSlider').value, 10);
+            await api('/config/motion', 'POST', { y_max: y, x_max: x, dpad_duration: dpadDur });
+        } catch(e) { console.error('Failed to save motion config:', e); }
+    }
+
+    // Initialize
+    updateBatteryUI(0, 0, 0, '-', '-');
+    loadMotionConfig();
+    
+    // Resume existing connection on load
+    api('/status').then(res => {
+        if (res.connected === 'true') {
+            updateConnUI(true, res.device_name, res.device_address);
+        }
+    }).catch(e => console.error(e));
+
+</script>
+</body>
+</html>

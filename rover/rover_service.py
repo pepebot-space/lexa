@@ -17,11 +17,14 @@ Config: see rover/.env.example (pins, safety limits, calibration).
 """
 import asyncio
 import os
+from collections import deque
 from contextlib import asynccontextmanager
+from datetime import datetime
+from pathlib import Path
 from typing import Any, Optional
 
 from fastapi import FastAPI
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
 os.environ.setdefault("GPIOZERO_PIN_FACTORY", "lgpio")
@@ -145,11 +148,46 @@ class Rover:
 
 rover = Rover()
 
+# --- Dashboard teleop: non-blocking with a deadman expiry (no command backlog) ---
+_teleop = {"expire": 0.0, "active": False}
+
+
+def _now() -> float:
+    return asyncio.get_event_loop().time()
+
+
+async def teleop_set(left_v: float, right_v: float, seconds: float):
+    """Set wheels now and auto-stop after `seconds` via the ticker (deadman).
+    Re-sending refreshes the expiry, so held joystick/d-pad stays smooth."""
+    rover.require()
+    seconds = _clamp(seconds, 0.0, MAX_DRIVE_SECONDS)
+    rover._set_wheels(left_v, right_v)
+    _teleop["expire"] = _now() + seconds
+    _teleop["active"] = True
+
+
+async def teleop_stop():
+    _teleop["active"] = False
+    rover._stop()
+
+
+async def teleop_ticker():
+    while True:
+        await asyncio.sleep(0.05)
+        try:
+            if _teleop["active"] and _now() >= _teleop["expire"]:
+                _teleop["active"] = False
+                rover._stop()
+        except Exception:
+            pass
+
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     rover.connect()
+    ticker = asyncio.create_task(teleop_ticker())
     yield
+    ticker.cancel()
     rover._stop()
 
 
@@ -436,6 +474,134 @@ async def mcp_endpoint(body: dict):
         except Exception as e:
             return _rpc(id_, {"content": [{"type": "text", "text": f"error: {e}"}], "isError": True})
     return _rpc(id_, error={"code": -32601, "message": f"method not found: {method}"})
+
+
+# --------------------------------------------------------------------------- #
+# Web dashboard (rebranded vexa UI) + /api/* compatibility layer
+# --------------------------------------------------------------------------- #
+STATIC_INDEX = Path(__file__).resolve().parent.parent / "static" / "index.html"
+MOTION_CFG = {"y_max": 12000, "x_max": 8000, "dpad_duration": 500}
+LOGS: deque = deque(maxlen=80)
+
+
+def add_log(level: str, component: str, message: str):
+    LOGS.append({
+        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "level": level, "component": component, "message": message,
+    })
+
+
+@app.get("/")
+async def dashboard():
+    return FileResponse(str(STATIC_INDEX))
+
+
+@app.get("/api/status")
+async def api_status():
+    # report connected so the dashboard is usable immediately (rover is local GPIO)
+    return {"connected": "true", "device_name": "LEXA Rover", "device_address": "gpio-l298n"}
+
+
+@app.get("/api/scan")
+async def api_scan(timeout: float = 5):
+    return {"devices": [{"address": "gpio-l298n", "name": "LEXA Rover"}]}
+
+
+@app.post("/api/connect")
+async def api_connect(body: dict):
+    add_log("SUCCESS", "LINK", "Connected to LEXA Rover (GPIO)")
+    return {"name": "LEXA Rover", "address": body.get("address", "gpio-l298n")}
+
+
+@app.post("/api/disconnect")
+async def api_disconnect():
+    await teleop_stop()
+    return {"ok": True}
+
+
+# Voice agent lives in the separate Live client (client-video.py) — stub here.
+@app.get("/api/agent/status")
+async def api_agent_status():
+    return {"status": "idle"}
+
+
+@app.post("/api/agent/start")
+async def api_agent_start(body: dict | None = None):
+    return {"ok": True}
+
+
+@app.post("/api/agent/stop")
+async def api_agent_stop():
+    return {"ok": True}
+
+
+# No battery sensor on this build — return numeric placeholders so the UI renders.
+@app.get("/api/battery")
+async def api_battery():
+    return {"battery_percent": 100.0, "voltage": 0.0, "raw_deci_volt": 0,
+            "rx_decode_mode": "n/a", "battery_percent_source": "no-sensor"}
+
+
+@app.get("/api/logs")
+async def api_logs(limit: int = 15):
+    return {"logs": list(LOGS)[-limit:]}
+
+
+@app.get("/api/config/motion")
+async def api_get_motion():
+    return MOTION_CFG
+
+
+@app.post("/api/config/motion")
+async def api_set_motion(body: dict):
+    for k in ("y_max", "x_max", "dpad_duration"):
+        if k in body:
+            MOTION_CFG[k] = body[k]
+    return {"ok": True, **MOTION_CFG}
+
+
+@app.post("/api/joystick")
+async def api_joystick(body: dict):
+    x = float(body.get("x", 0))
+    y = float(body.get("y", 0))
+    dur = float(body.get("duration", 0.5))
+    linear = _clamp(y / 32767.0, -1.0, 1.0)
+    angular = _clamp(-x / 32767.0, -1.0, 1.0)  # joystick right -> turn right
+    try:
+        await teleop_set(linear - angular, linear + angular, dur)
+        return {"ok": True, "linear": round(linear, 3), "angular": round(angular, 3)}
+    except Exception as e:
+        return _err(e)
+
+
+@app.post("/api/move")
+async def api_move(body: dict):
+    action = (body.get("action") or "stop").lower()
+    dur = float(body.get("duration", MOTION_CFG["dpad_duration"] / 1000.0))
+    fwd = _clamp(MOTION_CFG["y_max"] / 32767.0, 0.0, MAX_WHEEL_POWER)
+    turn = _clamp(MOTION_CFG["x_max"] / 32767.0, 0.0, MAX_WHEEL_POWER)
+    try:
+        if action == "forward":
+            await teleop_set(fwd, fwd, dur)
+        elif action == "backward":
+            await teleop_set(-fwd, -fwd, dur)
+        elif action == "left":
+            await teleop_set(-turn, turn, dur)
+        elif action == "right":
+            await teleop_set(turn, -turn, dur)
+        else:
+            await teleop_stop()
+            return {"ok": True, "stopped": True}
+        add_log("CMD", "MOVE", action)
+        return {"ok": True, "action": action}
+    except Exception as e:
+        return _err(e)
+
+
+@app.get("/video_feed")
+async def video_feed():
+    # The webcam is owned by the Live client (client-video.py); not served here.
+    return JSONResponse(status_code=503, content={"detail": "camera served by the Live client"})
 
 
 if __name__ == "__main__":
