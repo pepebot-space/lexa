@@ -71,6 +71,14 @@ CALIB_MPS = _float("CALIB_MPS", 0.25)     # m/s at MOVE_POWER (forward)
 TURN_POWER = _float("TURN_POWER", 0.45)
 CALIB_DPS = _float("CALIB_DPS", 90.0)     # deg/s at TURN_POWER (spin in place)
 
+# Obstacle/stall detection: auto-stop if a wheel is powered but not turning
+# (rover pushing against a wall / stuck). Uses the encoders — no extra sensor.
+STALL_CHECK = os.environ.get("STALL_CHECK", "1") not in ("0", "false", "False")
+STALL_GRACE_S = _float("STALL_GRACE_S", 0.3)      # spin-up grace before checking
+STALL_WINDOW_S = _float("STALL_WINDOW_S", 0.2)    # window to measure pulses over
+STALL_MIN_PULSES = _int("STALL_MIN_PULSES", 3)    # < this in a window = stalled
+STALL_MIN_POWER = _float("STALL_MIN_POWER", 0.25)  # only check when truly powered
+
 PORT = _int("ROVER_PORT", 9000)
 
 
@@ -151,6 +159,32 @@ app = FastAPI(title="lexa rover control (gpiozero)", version="0.2.0", lifespan=l
 # --------------------------------------------------------------------------- #
 # Core actions (shared by REST routes and MCP tools)
 # --------------------------------------------------------------------------- #
+async def _run_motion(left_v: float, right_v: float, seconds: float) -> bool:
+    """Drive wheels for `seconds`, auto-stopping early if stalled (an obstacle).
+    Returns True if a stall was detected. Holds the motion lock."""
+    blocked = False
+    powered = abs(left_v) >= STALL_MIN_POWER or abs(right_v) >= STALL_MIN_POWER
+    async with rover._lock:
+        rover._set_wheels(left_v, right_v)
+        elapsed = 0.0
+        win = 0.0
+        last = rover.enc_left_count + rover.enc_right_count
+        while elapsed < seconds:
+            await asyncio.sleep(0.1)
+            elapsed += 0.1
+            if not (STALL_CHECK and powered) or elapsed < STALL_GRACE_S:
+                continue
+            win += 0.1
+            if win + 1e-9 >= STALL_WINDOW_S:
+                now = rover.enc_left_count + rover.enc_right_count
+                if now - last < STALL_MIN_PULSES:
+                    blocked = True
+                    break
+                last, win = now, 0.0
+        rover._stop()
+    return blocked
+
+
 async def act_drive(linear: float, angular: float, seconds: float) -> dict:
     """Differential power drive for a bounded duration, then auto-stop.
     linear forward(+)/back(-), angular left(+)/right(-), both -1..1."""
@@ -160,12 +194,9 @@ async def act_drive(linear: float, angular: float, seconds: float) -> dict:
     seconds = _clamp(seconds, 0.0, MAX_DRIVE_SECONDS)
     left_v = linear - angular
     right_v = linear + angular
-    async with rover._lock:
-        rover._set_wheels(left_v, right_v)
-        await asyncio.sleep(seconds)
-        rover._stop()
+    blocked = await _run_motion(left_v, right_v, seconds)
     return {"ok": True, "linear": linear, "angular": angular, "seconds": seconds,
-            "wheels": {"left": round(left_v, 3), "right": round(right_v, 3)}}
+            "blocked": blocked, "wheels": {"left": round(left_v, 3), "right": round(right_v, 3)}}
 
 
 async def act_move(distance_m: float, power: Optional[float]) -> dict:
@@ -175,12 +206,9 @@ async def act_move(distance_m: float, power: Optional[float]) -> dict:
     p = _clamp(power if power else MOVE_POWER, 0.1, MAX_WHEEL_POWER)
     direction = 1.0 if distance_m >= 0 else -1.0
     seconds = _clamp(abs(distance_m) / max(CALIB_MPS, 1e-3), 0.0, MAX_MOVE_SECONDS)
-    async with rover._lock:
-        rover._set_wheels(direction * p, direction * p)
-        await asyncio.sleep(seconds)
-        rover._stop()
+    blocked = await _run_motion(direction * p, direction * p, seconds)
     return {"ok": True, "distance_m": distance_m, "power": p, "seconds": round(seconds, 2),
-            "note": "open-loop (time-based); calibrate CALIB_MPS"}
+            "blocked": blocked, "note": "open-loop (time-based); calibrate CALIB_MPS"}
 
 
 async def act_turn(angle_deg: float, power: Optional[float]) -> dict:
@@ -190,12 +218,9 @@ async def act_turn(angle_deg: float, power: Optional[float]) -> dict:
     p = _clamp(power if power else TURN_POWER, 0.1, MAX_WHEEL_POWER)
     direction = 1.0 if angle_deg >= 0 else -1.0  # +left => left wheel back, right fwd
     seconds = _clamp(abs(angle_deg) / max(CALIB_DPS, 1e-3), 0.0, MAX_MOVE_SECONDS)
-    async with rover._lock:
-        rover._set_wheels(-direction * p, direction * p)
-        await asyncio.sleep(seconds)
-        rover._stop()
+    blocked = await _run_motion(-direction * p, direction * p, seconds)
     return {"ok": True, "angle_deg": angle_deg, "power": p, "seconds": round(seconds, 2),
-            "note": "open-loop (time-based); calibrate CALIB_DPS"}
+            "blocked": blocked, "note": "open-loop (time-based); calibrate CALIB_DPS"}
 
 
 async def act_stop() -> dict:
@@ -335,7 +360,8 @@ TOOLS = [
     {"name": "rover_drive",
      "description": "Drive the rover with power for a short bounded time, then auto-stop. "
      "linear forward(+)/back(-) -1..1; angular left(+)/right(-) -1..1; seconds (auto-capped). "
-     "Call repeatedly for continuous motion.",
+     "Call repeatedly for continuous motion. If wheels stall against an obstacle it stops "
+     "early and returns blocked=true — back off and turn instead of pushing.",
      "inputSchema": {"type": "object", "properties": {
          "linear": {"type": "number", "minimum": -1, "maximum": 1},
          "angular": {"type": "number", "minimum": -1, "maximum": 1},

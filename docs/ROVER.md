@@ -92,6 +92,10 @@ Then run the Live client (`python3 client-video.py`) and talk — the LLM has th
   unbounded "drive forever"; continuous motion = repeated calls.
 - `/move` and `/turn` distance/angle/time capped (`MAX_MOVE_M`, `MAX_TURN_DEG`, `MAX_MOVE_SECONDS`).
 - `rover_estop` halts and blocks motion until `/estop/clear`.
+- **Stall/obstacle detection:** while powered, the encoders are watched; if the
+  wheels aren't turning (pushing a wall / stuck) the motion auto-stops early and
+  the result includes `blocked: true` (tune `STALL_*` in `rover/.env`). No extra
+  sensor needed. Vision-based obstacle awareness is handled by the Live LLM.
 - The LLM cannot exceed any limit; tune them in `rover/.env`.
 
 ## Notes / next
