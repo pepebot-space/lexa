@@ -1,0 +1,16 @@
+[Unit]
+Description=lexa rover control API + MCP server
+After=network-online.target viam-server.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=vexa
+WorkingDirectory=/home/vexa/lexa
+EnvironmentFile=/home/vexa/lexa/rover/.env
+ExecStart=/home/vexa/lexa/rover/.venv/bin/uvicorn rover_service:app --app-dir /home/vexa/lexa/rover --host 0.0.0.0 --port 9000
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

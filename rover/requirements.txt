@@ -1,0 +1,4 @@
+viam-sdk
+fastapi
+uvicorn[standard]
+pydantic

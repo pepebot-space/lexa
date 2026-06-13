@@ -8,6 +8,9 @@ Pepebot Live API gateway and plays the model's audio response back.
   lexa.local (mic + webcam + speaker)  ───ws──►  gateway 192.168.100.242:18790
 ```
 
+It also runs a **rover control service** so the LLM can drive the Viam rover via
+tools — see [docs/ROVER.md](docs/ROVER.md).
+
 ## Install (on lexa.local)
 
 ```bash

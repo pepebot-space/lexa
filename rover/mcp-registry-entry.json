@@ -1,0 +1,12 @@
+{
+  "__comment": "Fallback manual registration. Preferred path is the skill (skills/rover/SKILL.md) whose mcp: frontmatter auto-syncs this entry. To register manually, merge this 'servers' entry into the gateway's ~/.pepebot/workspace/mcp/registry.json (on the 192.168.100.242 host).",
+  "servers": {
+    "rover-control": {
+      "enabled": true,
+      "transport": "http",
+      "url": "http://192.168.100.212:9000/mcp",
+      "description": "lexa rover control (drive/move/turn/stop/state/imu)",
+      "source": "user"
+    }
+  }
+}
