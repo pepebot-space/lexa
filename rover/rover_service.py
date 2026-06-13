@@ -255,6 +255,7 @@ async def read_imu() -> dict:
         addr = int(os.environ.get("ADXL345_ADDR", "0x53"), 16)
         bus = SMBus(int(os.environ.get("I2C_BUS", "1")))
         bus.write_byte_data(addr, 0x2D, 0x08)  # POWER_CTL: measure
+        await asyncio.sleep(0.05)  # let the first sample settle (else reads 0)
 
         def _ax(lo, hi):
             v = bus.read_byte_data(addr, lo) | (bus.read_byte_data(addr, hi) << 8)
