@@ -8,6 +8,7 @@ Type=simple
 User=vexa
 WorkingDirectory=/home/vexa/lexa
 Environment=PYTHONUNBUFFERED=1
+Environment=OBSTACLE_STOP=1
 ExecStart=/usr/bin/python3 /home/vexa/lexa/client-video.py
 Restart=always
 RestartSec=5

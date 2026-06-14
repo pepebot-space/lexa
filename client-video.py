@@ -110,6 +110,12 @@ DEFAULT_SYSTEM_PROMPT = """You are LEXA, a small autonomous differential-drive r
 - rover_move(distance_m): drive straight (+forward / -back).
 - rover_stop(); rover_get_state() (blocked?, encoders); rover_get_imu() (tilt).
 
+READING THE CAMERA (the image is ANNOTATED to help you navigate):
+- RED tint = obstacle / not-floor — do NOT drive into red areas.
+- Top labels LEFT / CENTER / RIGHT show CLEAR or BLOCKED for each direction.
+- Horizontal lines mark distance: NEAR, MID, FAR.
+- Decide from these: if CENTER is BLOCKED, or red fills the lower-center (NEAR), do NOT go forward — rover_turn toward whichever side (LEFT or RIGHT) is CLEAR, then move. Drive forward ONLY when CENTER is CLEAR.
+
 GOLDEN RULES:
 1) LOOK AROUND FIRST. You have only ONE camera, so to find something or understand a space you MUST rotate to see. When searching or exploring: spin in place in ~30-45 degree steps and check the camera after each step — do a full sweep (up to a 360 turn) to locate the target or a clear path BEFORE driving. If you still don't see it, drive to a new spot and scan again. Never drive forward blindly.
 2) MOVE DECISIVELY, not in tiny twitches. Take real steps: rover_move ~0.5-1.0 m, or rover_drive ~0.4 power for ~1.5-2 s, then re-check the camera. (Commands are still bounded for safety.)
@@ -221,6 +227,49 @@ def detect_obstacle(frame, state: dict) -> bool:
         return state["count"] >= OBSTACLE_FRAMES
     except Exception:
         return False
+
+
+# Visual prompting: draw navigation hints onto the frame the LLM sees.
+ANNOTATE = os.environ.get("ANNOTATE_FRAME", "1") not in ("0", "false", "False")
+
+
+def annotate_frame(frame):
+    """Overlay nav hints (floor-appearance heuristic, mono camera): red tint =
+    not-floor/obstacle; KIRI/TENGAH/KANAN CLEAR/BLOCKED labels; near/mid/far
+    distance lines. Returns the annotated frame (best-effort)."""
+    if cv2 is None:
+        return frame
+    try:
+        import numpy as np
+
+        h, w = frame.shape[:2]
+        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+        fy0 = int(h * 0.92)
+        ref = np.median(hsv[fy0:h, int(w * 0.35):int(w * 0.65)].reshape(-1, 3), axis=0)
+        ry0 = int(h * 0.50)
+        region = hsv[ry0:fy0].astype(np.int16)
+        nonfloor = np.abs(region - ref).sum(axis=2) > OBSTACLE_TOL  # H' x W bool
+        ov = frame.copy()
+        ov[ry0:fy0][nonfloor] = (0, 0, 255)  # red on obstacle pixels
+        frame = cv2.addWeighted(ov, 0.30, frame, 0.70, 0)
+        zw = max(1, nonfloor.shape[1] // 3)
+        for i, name in enumerate(("LEFT", "CENTER", "RIGHT")):
+            col = nonfloor[:, i * zw:(i + 1) * zw]
+            frac = float(col.mean()) if col.size else 0.0
+            status = "CLEAR" if frac < 0.35 else ("BLOCKED" if frac > 0.6 else "WARN")
+            color = (0, 200, 0) if status == "CLEAR" else ((0, 0, 255) if status == "BLOCKED" else (0, 180, 255))
+            x = int(w * i / 3)
+            cv2.line(frame, (x, ry0), (x, fy0), (255, 255, 0), 1)
+            cv2.putText(frame, f"{name}:{status}", (x + 4, ry0 + 18),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1, cv2.LINE_AA)
+        for yf, lab in ((0.62, "FAR"), (0.78, "MID"), (0.90, "NEAR")):
+            y = int(h * yf)
+            cv2.line(frame, (int(w * 0.25), y), (int(w * 0.75), y), (210, 210, 210), 1)
+            cv2.putText(frame, lab, (int(w * 0.76), y + 4),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.35, (210, 210, 210), 1, cv2.LINE_AA)
+        return frame
+    except Exception:
+        return frame
 
 
 def _post_rover(path: str):
@@ -654,6 +703,9 @@ async def main():
                                 obstacle_state["count"] = 0
                                 print("Obstacle ahead -> rover /stop (camera assist)")
                                 await asyncio.to_thread(_post_rover, "/stop")
+
+                        if ANNOTATE:
+                            frame = await asyncio.to_thread(annotate_frame, frame)
 
                         ok_jpg, encoded = await asyncio.to_thread(
                             cv2.imencode,
