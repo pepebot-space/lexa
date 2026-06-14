@@ -115,6 +115,7 @@ READING THE CAMERA (the image is ANNOTATED to help you navigate):
 - Top labels LEFT / CENTER / RIGHT show CLEAR or BLOCKED for each direction.
 - Horizontal lines mark distance: NEAR, MID, FAR.
 - Decide from these: if CENTER is BLOCKED, or red fills the lower-center (NEAR), do NOT go forward — rover_turn toward whichever side (LEFT or RIGHT) is CLEAR, then move. Drive forward ONLY when CENTER is CLEAR.
+- If labels show "?" (floor read uncertain — e.g. a shiny/reflective floor), IGNORE the red/zone hints and judge obstacles from the actual scene yourself; the floor is probably clear.
 
 GOLDEN RULES:
 1) LOOK AROUND FIRST. You have only ONE camera, so to find something or understand a space you MUST rotate to see. When searching or exploring: spin in place in ~30-45 degree steps and check the camera after each step — do a full sweep (up to a 360 turn) to locate the target or a clear path BEFORE driving. If you still don't see it, drive to a new spot and scan again. Never drive forward blindly.
@@ -187,81 +188,88 @@ VIDEO_HEIGHT = 360
 VIDEO_JPEG_QUALITY = 70
 VIDEO_INTERVAL_SEC = 0.5  # ~2 FPS
 
-# Camera obstacle-stop (safety assist; runs here in the client, which owns the
-# webcam). Floor-appearance heuristic: the bottom-center strip is taken as the
-# floor reference when the path is clear; if the forward ROI is mostly "not
-# floor" (an object intruding) for several consecutive frames, POST /stop to the
-# rover. Coarse (mono camera, no depth) — the LLM's own vision stays primary.
-# Default OFF: the mono-camera floor heuristic false-triggers until tuned on the
-# actual floor (run test-obstacle.py on the floor, set OBSTACLE_TOL/FRACTION, then
-# enable with OBSTACLE_STOP=1). IMU + encoder-stall safety remain active regardless.
+# Camera obstacle-stop + visual annotation (runs in the client which owns the
+# webcam). Floor-appearance heuristic, GLARE-AWARE: a pixel is "obstacle" if it
+# is DARKER or MORE SATURATED than the floor reference; brighter pixels (glare /
+# reflections on shiny floors) are IGNORED. If almost everything flags (reflective
+# floor -> unreliable), the overlay is suppressed so it can't mislead the LLM.
 OBSTACLE_STOP = os.environ.get("OBSTACLE_STOP", "0") not in ("0", "false", "False")
 ROVER_API = os.environ.get("ROVER_API", "http://localhost:9000")
-OBSTACLE_FRACTION = float(os.environ.get("OBSTACLE_FRACTION", "0.6"))  # non-floor frac
-OBSTACLE_FRAMES = int(os.environ.get("OBSTACLE_FRAMES", "3"))          # consecutive frames
-OBSTACLE_TOL = int(os.environ.get("OBSTACLE_TOL", "80"))               # HSV summed dist
+OBSTACLE_FRAMES = int(os.environ.get("OBSTACLE_FRAMES", "3"))         # consecutive frames to /stop
 OBSTACLE_COOLDOWN_SEC = float(os.environ.get("OBSTACLE_COOLDOWN_SEC", "2.5"))
+FLOOR_ROI_TOP = float(os.environ.get("FLOOR_ROI_TOP", "0.55"))       # top of forward ROI (higher = look further)
+FLOOR_DARK_TOL = int(os.environ.get("FLOOR_DARK_TOL", "45"))         # darker-than-floor => obstacle
+FLOOR_SAT_TOL = int(os.environ.get("FLOOR_SAT_TOL", "45"))           # more-saturated-than-floor => obstacle
+FLOOR_CONF_GATE = float(os.environ.get("FLOOR_CONF_GATE", "0.80"))   # >this flagged-frac => unreliable, suppress
+ZONE_CLEAR = float(os.environ.get("ZONE_CLEAR", "0.30"))
+ZONE_BLOCK = float(os.environ.get("ZONE_BLOCK", "0.55"))
+ANNOTATE = os.environ.get("ANNOTATE_FRAME", "1") not in ("0", "false", "False")
+
+
+def _floor_analysis(frame):
+    """Glare-aware floor/obstacle analysis of the forward ROI. Obstacle = darker
+    OR more saturated than the floor reference (bright reflections ignored).
+    Returns dict: mask, ry0, fy0, zones[3], total, confident."""
+    import numpy as np
+
+    h, w = frame.shape[:2]
+    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV).astype(np.int16)
+    fy0 = int(h * 0.92)
+    ref = np.median(hsv[fy0:h, int(w * 0.30):int(w * 0.70)].reshape(-1, 3), axis=0)
+    ry0 = int(h * FLOOR_ROI_TOP)
+    region = hsv[ry0:fy0]
+    sat, val = region[:, :, 1], region[:, :, 2]
+    mask = ((ref[2] - val) > FLOOR_DARK_TOL) | ((sat - ref[1]) > FLOOR_SAT_TOL)
+    total = float(mask.mean()) if mask.size else 0.0
+    zw = max(1, mask.shape[1] // 3)
+    zones = [float(mask[:, i * zw:(i + 1) * zw].mean()) for i in range(3)]
+    return {"mask": mask, "ry0": ry0, "fy0": fy0, "zones": zones,
+            "total": total, "confident": total <= FLOOR_CONF_GATE}
 
 
 def detect_obstacle(frame, state: dict) -> bool:
-    """Return True when a near obstacle fills the forward view for OBSTACLE_FRAMES
-    consecutive frames (floor-appearance heuristic). `state` holds the counter."""
+    """True when the CENTER forward zone is blocked for OBSTACLE_FRAMES frames.
+    Only fires when the analysis is confident (not a reflective-floor misread)."""
     if cv2 is None:
         return False
     try:
-        import numpy as np
-
-        h, w = frame.shape[:2]
-        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-        fy0 = int(h * 0.92)
-        floor = hsv[fy0:h, int(w * 0.35):int(w * 0.65)].reshape(-1, 3)
-        if floor.size == 0:
-            return False
-        ref = np.median(floor, axis=0)
-        roi = hsv[int(h * 0.55):fy0, int(w * 0.30):int(w * 0.70)].astype(np.int16)
-        if roi.size == 0:
-            return False
-        nonfloor = np.abs(roi - ref).sum(axis=2) > OBSTACLE_TOL
-        frac = float(nonfloor.mean())
-        state["count"] = state.get("count", 0) + 1 if frac >= OBSTACLE_FRACTION else 0
+        a = _floor_analysis(frame)
+        blocked = a["confident"] and a["zones"][1] >= ZONE_BLOCK
+        state["count"] = state.get("count", 0) + 1 if blocked else 0
         return state["count"] >= OBSTACLE_FRAMES
     except Exception:
         return False
 
 
-# Visual prompting: draw navigation hints onto the frame the LLM sees.
-ANNOTATE = os.environ.get("ANNOTATE_FRAME", "1") not in ("0", "false", "False")
-
-
 def annotate_frame(frame):
-    """Overlay nav hints (floor-appearance heuristic, mono camera): red tint =
-    not-floor/obstacle; KIRI/TENGAH/KANAN CLEAR/BLOCKED labels; near/mid/far
-    distance lines. Returns the annotated frame (best-effort)."""
+    """Overlay nav hints for the LLM: red tint = obstacle (glare-aware);
+    LEFT/CENTER/RIGHT CLEAR/BLOCKED; NEAR/MID/FAR distance lines. If the floor
+    read is unreliable (reflective), suppress red + mark zones '?' so it doesn't
+    mislead. The direction grid + distance lines are always drawn (reliable)."""
     if cv2 is None:
         return frame
     try:
-        import numpy as np
-
         h, w = frame.shape[:2]
-        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-        fy0 = int(h * 0.92)
-        ref = np.median(hsv[fy0:h, int(w * 0.35):int(w * 0.65)].reshape(-1, 3), axis=0)
-        ry0 = int(h * 0.50)
-        region = hsv[ry0:fy0].astype(np.int16)
-        nonfloor = np.abs(region - ref).sum(axis=2) > OBSTACLE_TOL  # H' x W bool
-        ov = frame.copy()
-        ov[ry0:fy0][nonfloor] = (0, 0, 255)  # red on obstacle pixels
-        frame = cv2.addWeighted(ov, 0.30, frame, 0.70, 0)
-        zw = max(1, nonfloor.shape[1] // 3)
+        a = _floor_analysis(frame)
+        ry0, fy0, conf = a["ry0"], a["fy0"], a["confident"]
+        if conf:
+            ov = frame.copy()
+            ov[ry0:fy0][a["mask"]] = (0, 0, 255)
+            frame = cv2.addWeighted(ov, 0.30, frame, 0.70, 0)
         for i, name in enumerate(("LEFT", "CENTER", "RIGHT")):
-            col = nonfloor[:, i * zw:(i + 1) * zw]
-            frac = float(col.mean()) if col.size else 0.0
-            status = "CLEAR" if frac < 0.35 else ("BLOCKED" if frac > 0.6 else "WARN")
-            color = (0, 200, 0) if status == "CLEAR" else ((0, 0, 255) if status == "BLOCKED" else (0, 180, 255))
             x = int(w * i / 3)
             cv2.line(frame, (x, ry0), (x, fy0), (255, 255, 0), 1)
+            if conf:
+                fr = a["zones"][i]
+                status = "CLEAR" if fr < ZONE_CLEAR else ("BLOCKED" if fr > ZONE_BLOCK else "WARN")
+                color = (0, 200, 0) if status == "CLEAR" else ((0, 0, 255) if status == "BLOCKED" else (0, 180, 255))
+            else:
+                status, color = "?", (200, 200, 200)
             cv2.putText(frame, f"{name}:{status}", (x + 4, ry0 + 18),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1, cv2.LINE_AA)
+        if not conf:
+            cv2.putText(frame, "floor read uncertain (reflective) - judge from the scene",
+                        (8, max(14, ry0 - 6)), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200, 200, 200), 1, cv2.LINE_AA)
         for yf, lab in ((0.62, "FAR"), (0.78, "MID"), (0.90, "NEAR")):
             y = int(h * yf)
             cv2.line(frame, (int(w * 0.25), y), (int(w * 0.75), y), (210, 210, 210), 1)
