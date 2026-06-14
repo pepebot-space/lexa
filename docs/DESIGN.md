@@ -60,7 +60,7 @@ Full pin map: see [WIRING.md](WIRING.md). Key pins (BCM):
 | `static/index.html` | **Web dashboard** (rebranded from `pepebot-space/vexa`): camera/power/logs/motion panels. |
 | `skills/rover/SKILL.md` | Pepebot skill: registers the rover MCP server + gives the LLM driving guidance. |
 | `rover/`, `setup-*.sh`, `*.service` | deps, installers, systemd units. |
-| `test-*.py`, `gen-tones.py`, `analyze-audio.py`, `play-test.py`, `resample-play.py` | diagnostics built during bring-up. |
+| `test-obstacle.py` | diagnostic: print the floor/obstacle heuristic's non-floor fraction to tune it on a given floor. |
 
 ---
 
