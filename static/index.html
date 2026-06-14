@@ -497,7 +497,7 @@
                 document.getElementById('agentStatusText').textContent = 'VOICE: ACTIVE';
                 document.getElementById('voiceToggleBtn').classList.add('bg-lexa-accent', 'text-black', 'border-lexa-accent');
                 // Set video feed source (causes browser to request MJPEG stream)
-                document.getElementById('cameraFeed').src = `/video_feed?rnd=${Math.random()}`;
+                document.getElementById('cameraFeed').src = `http://${location.hostname}:8081/video?rnd=${Math.random()}`;
             } else {
                 await api('/agent/stop', 'POST');
                 isVoiceActive = false;
@@ -516,7 +516,7 @@
             isVoiceActive = true;
             document.getElementById('agentStatusText').textContent = 'VOICE: ACTIVE';
             document.getElementById('voiceToggleBtn').classList.add('bg-lexa-accent', 'text-black', 'border-lexa-accent');
-            document.getElementById('cameraFeed').src = `/video_feed?rnd=${Math.random()}`;
+            document.getElementById('cameraFeed').src = `http://${location.hostname}:8081/video?rnd=${Math.random()}`;
         }
     }).catch(e => console.error(e));
 
@@ -750,6 +750,9 @@
     // Initialize
     updateBatteryUI(0, 0, 0, '-', '-');
     loadMotionConfig();
+    // Live camera = MJPEG stream from the Live client (port 8081). Shows when the
+    // Live client (client-video.py) is running; otherwise the panel stays offline.
+    document.getElementById('cameraFeed').src = `http://${location.hostname}:8081/video?rnd=${Math.random()}`;
     
     // Resume existing connection on load
     api('/status').then(res => {

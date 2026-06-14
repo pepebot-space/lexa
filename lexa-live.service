@@ -1,0 +1,16 @@
+[Unit]
+Description=lexa Pepebot Live client (mic + webcam + speaker, autonomous rover) + MJPEG camera stream
+After=network-online.target sound.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=vexa
+WorkingDirectory=/home/vexa/lexa
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python3 /home/vexa/lexa/client-video.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

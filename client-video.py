@@ -7,7 +7,10 @@ import math
 import os
 import signal
 import sys
+import threading
+import time
 from array import array
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Optional
 
 import pyaudio  # apt: python3-pyaudio  |  pip: pyaudio
@@ -231,6 +234,49 @@ def _post_rover(path: str):
         urllib.request.urlopen(req, timeout=2).read()
     except Exception:
         pass
+
+
+# MJPEG camera stream — re-serves the webcam frames this client already grabs so
+# the web dashboard can show a live view (the camera can't be opened twice).
+MJPEG_ENABLE = os.environ.get("MJPEG_ENABLE", "1") not in ("0", "false", "False")
+MJPEG_PORT = _env_int("MJPEG_PORT") or 8081
+_latest_jpeg = {"data": None}  # set by sender_video each frame
+
+
+class _MJPEGHandler(BaseHTTPRequestHandler):
+    def log_message(self, *_):
+        pass
+
+    def do_GET(self):
+        if self.path.split("?")[0] not in ("/video", "/"):
+            self.send_response(404)
+            self.end_headers()
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")
+        self.send_header("Cache-Control", "no-cache, private")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        try:
+            while True:
+                data = _latest_jpeg["data"]
+                if data:
+                    self.wfile.write(
+                        b"--frame\r\nContent-Type: image/jpeg\r\nContent-Length: "
+                        + str(len(data)).encode() + b"\r\n\r\n" + data + b"\r\n"
+                    )
+                time.sleep(0.4)  # ~2.5 fps
+        except Exception:
+            return
+
+
+def _start_mjpeg_server():
+    try:
+        srv = ThreadingHTTPServer(("0.0.0.0", MJPEG_PORT), _MJPEGHandler)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        print(f"MJPEG camera stream on :{MJPEG_PORT}/video")
+    except Exception as e:
+        print(f"MJPEG server failed: {e}")
 
 
 class NoiseGate:
@@ -590,6 +636,8 @@ async def main():
 
                 obstacle_state = {"count": 0}
                 last_stop = 0.0
+                if MJPEG_ENABLE:
+                    _start_mjpeg_server()
                 try:
                     while not stop_event.is_set():
                         ok, frame = await asyncio.to_thread(cap.read)
@@ -617,7 +665,10 @@ async def main():
                             await asyncio.sleep(VIDEO_INTERVAL_SEC)
                             continue
 
-                        b64 = base64.b64encode(encoded.tobytes()).decode("utf-8")
+                        frame_bytes = encoded.tobytes()
+                        if MJPEG_ENABLE:
+                            _latest_jpeg["data"] = frame_bytes
+                        b64 = base64.b64encode(frame_bytes).decode("utf-8")
                         await ws.send(
                             json.dumps(
                                 {
