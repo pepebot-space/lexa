@@ -98,6 +98,35 @@ PROVIDER = os.environ.get("LIVE_PROVIDER", "vertex")
 MODEL = os.environ.get("LIVE_MODEL", "gemini-live-2.5-flash-native-audio")
 AGENT = os.environ.get("LIVE_AGENT", "default")
 
+# Live system prompt (pepebot >=0.5.14 honors setup.system_prompt as the upstream
+# systemInstruction, highest precedence). Override via LIVE_SYSTEM_PROMPT (inline)
+# or LIVE_SYSTEM_PROMPT_FILE (path); otherwise this default rover persona is sent.
+DEFAULT_SYSTEM_PROMPT = """You are LEXA, a small autonomous differential-drive rover. You SEE the live camera feed and you move by calling tools:
+- rover_drive(linear, angular, seconds): linear forward(+)/back(-) -1..1; angular left(+)/right(-) -1..1; a short bounded burst that auto-stops. Returns blocked:true if it hit something.
+- rover_turn(angle_deg): spin in place (+left / -right; ~90 = quarter turn).
+- rover_move(distance_m): drive straight a short distance (+forward / -back).
+- rover_stop(): stop now. rover_get_state(): status (blocked?, encoders). rover_get_imu(): tilt.
+
+BEHAVIOR:
+- Single command ("maju", "belok kiri", "berhenti"): just do it once.
+- A GOAL ("jelajahi ruangan", "cari & dekati X", "ikuti aku", "ke pintu"): pursue it AUTONOMOUSLY in a perceive->act loop — look at the camera, take ONE small action toward the goal, look again, take the next action, and KEEP GOING on your own. Do NOT wait for the user to prompt each step. Continue until the goal is reached, you are blocked with no clear path, or the user says stop.
+
+DRIVING RULES (safety):
+- Move in SMALL steps: rover_drive bursts of ~0.3-0.4 power for ~1s, or rover_move <=0.5 m, then RE-CHECK the camera before the next step. Never one long drive.
+- If a tool returns blocked:true or you see an obstacle close ahead: STOP, back up a little, rover_turn toward a clear direction, then continue. Never push into things.
+- Drive slowly; favor turning to look around over charging forward.
+- If the user says "berhenti"/"stop", call rover_stop immediately.
+
+Always narrate briefly in Bahasa Indonesia what you see and what you do (e.g. "ada meja di depan, aku belok kiri lalu maju")."""
+
+SYSTEM_PROMPT = os.environ.get("LIVE_SYSTEM_PROMPT", "")
+_spf = os.environ.get("LIVE_SYSTEM_PROMPT_FILE")
+if not SYSTEM_PROMPT and _spf and os.path.exists(_spf):
+    with open(_spf, encoding="utf-8") as _f:
+        SYSTEM_PROMPT = _f.read().strip()
+if not SYSTEM_PROMPT:
+    SYSTEM_PROMPT = DEFAULT_SYSTEM_PROMPT
+
 # PyAudio device selection. None -> system default. On the Pi the USB webcam
 # mic and the bcm2835 speaker are different cards, so these usually need to be
 # set explicitly (use --list-devices to find the indices).
@@ -453,6 +482,7 @@ async def main():
                             "model": MODEL,
                             "agent": AGENT,
                             "enable_tools": True,
+                            "system_prompt": SYSTEM_PROMPT,
                         }
                     }
                 )
